@@ -209,7 +209,8 @@ private class ShellConfigurationFile {
                                 sslKeystore = Paths.get(it.keystore.path),
                                 keyStorePassword = it.keystore.password,
                                 trustStoreFile = Paths.get(it.truststore.path),
-                                trustStorePassword = it.truststore.password)
+                                trustStorePassword = it.truststore.password,
+                                crlCheckSoftFail = true)
                     }
 
             return ShellConfiguration(

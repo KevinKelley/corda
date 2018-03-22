@@ -22,7 +22,8 @@ fun NodeConfiguration.toShellConfig(): ShellConfiguration {
             ShellSslOptions(sslKeystore,
                     keyStorePassword,
                     trustStoreFile,
-                    trustStorePassword)
+                    trustStorePassword,
+                    crlCheckSoftFail)
         }
     } else {
         null

@@ -173,6 +173,7 @@ class AMQPBridgeTest {
             doReturn(temporaryFolder.root.toPath() / "artemis").whenever(it).baseDirectory
             doReturn(ALICE_NAME).whenever(it).myLegalName
             doReturn("trustpass").whenever(it).trustStorePassword
+            doReturn(true).whenever(it).crlCheckSoftFail
             doReturn("cordacadevpass").whenever(it).keyStorePassword
             doReturn(artemisAddress).whenever(it).p2pAddress
             doReturn(null).whenever(it).jmxMonitoringHttpPort
@@ -210,6 +211,7 @@ class AMQPBridgeTest {
                 serverConfig.loadSslKeyStore().internal,
                 serverConfig.keyStorePassword,
                 serverConfig.loadTrustStore().internal,
+                crlCheckSoftFail = true,
                 trace = true
         )
     }

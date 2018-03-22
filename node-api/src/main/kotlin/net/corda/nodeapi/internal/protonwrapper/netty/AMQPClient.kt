@@ -38,6 +38,7 @@ class AMQPClient(val targets: List<NetworkHostAndPort>,
                  private val keyStore: KeyStore,
                  private val keyStorePrivateKeyPassword: String,
                  private val trustStore: KeyStore,
+                 private val crlCheckSoftFail: Boolean,
                  private val trace: Boolean = false,
                  private val sharedThreadPool: EventLoopGroup? = null) : AutoCloseable {
     companion object {
@@ -102,7 +103,7 @@ class AMQPClient(val targets: List<NetworkHostAndPort>,
 
         init {
             keyManagerFactory.init(parent.keyStore, parent.keyStorePrivateKeyPassword.toCharArray())
-            trustManagerFactory.init(parent.trustStore)
+            trustManagerFactory.init(initialiseTrustStoreAndEnableCrlChecking(parent.trustStore, parent.crlCheckSoftFail))
         }
 
         override fun initChannel(ch: SocketChannel) {

@@ -118,6 +118,7 @@ data class NodeConfigurationImpl(
         override val emailAddress: String,
         override val keyStorePassword: String,
         override val trustStorePassword: String,
+        override val crlCheckSoftFail: Boolean,
         override val dataSourceProperties: Properties,
         override val compatibilityZoneURL: URL? = null,
         override val rpcUsers: List<User>,
@@ -155,7 +156,7 @@ data class NodeConfigurationImpl(
         private val logger = loggerFor<NodeConfigurationImpl>()
     }
 
-    override val rpcOptions: NodeRpcOptions = initialiseRpcOptions(rpcAddress, rpcSettings, SslOptions(baseDirectory / "certificates", keyStorePassword, trustStorePassword))
+    override val rpcOptions: NodeRpcOptions = initialiseRpcOptions(rpcAddress, rpcSettings, SslOptions(baseDirectory / "certificates", keyStorePassword, trustStorePassword, crlCheckSoftFail))
 
     private fun initialiseRpcOptions(explicitAddress: NetworkHostAndPort?, settings: NodeRpcSettings, fallbackSslOptions: SSLConfiguration): NodeRpcOptions {
         return when {

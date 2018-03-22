@@ -65,6 +65,7 @@ fun configureTestSSL(legalName: CordaX500Name): SSLConfiguration {
         override val certificatesDirectory = Files.createTempDirectory("certs")
         override val keyStorePassword: String get() = "cordacadevpass"
         override val trustStorePassword: String get() = "trustpass"
+        override val crlCheckSoftFail: Boolean = true
 
         init {
             configureDevKeyAndTrustStores(legalName)

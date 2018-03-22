@@ -40,6 +40,7 @@ class AMQPServer(val hostName: String,
                  private val keyStore: KeyStore,
                  private val keyStorePrivateKeyPassword: CharArray,
                  private val trustStore: KeyStore,
+                 private val crlCheckSoftFail: Boolean,
                  private val trace: Boolean = false) : AutoCloseable {
 
     companion object {
@@ -66,7 +67,8 @@ class AMQPServer(val hostName: String,
                 keyStore: KeyStore,
                 keyStorePrivateKeyPassword: String,
                 trustStore: KeyStore,
-                trace: Boolean = false) : this(hostName, port, userName, password, keyStore, keyStorePrivateKeyPassword.toCharArray(), trustStore, trace)
+                crlCheckSoftFail: Boolean,
+                trace: Boolean = false) : this(hostName, port, userName, password, keyStore, keyStorePrivateKeyPassword.toCharArray(), trustStore, crlCheckSoftFail, trace)
 
     private class ServerChannelInitializer(val parent: AMQPServer) : ChannelInitializer<SocketChannel>() {
         private val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
@@ -74,7 +76,7 @@ class AMQPServer(val hostName: String,
 
         init {
             keyManagerFactory.init(parent.keyStore, parent.keyStorePrivateKeyPassword)
-            trustManagerFactory.init(parent.trustStore)
+            trustManagerFactory.init(initialiseTrustStoreAndEnableCrlChecking(parent.trustStore, parent.crlCheckSoftFail))
         }
 
         override fun initChannel(ch: SocketChannel) {
