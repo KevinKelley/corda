@@ -188,7 +188,12 @@ class RaftUniquenessProvider(
     }
 
 
-    override fun commit(states: List<StateRef>, txId: SecureHash, callerIdentity: Party, requestSignature: NotarisationRequestSignature) {
+    override fun commit(
+            states: List<StateRef>,
+            txId: SecureHash,
+            callerIdentity: Party,
+            requestSignature: NotarisationRequestSignature,
+            timeWindowValid: Boolean) {
         log.debug("Attempting to commit input states: ${states.joinToString()}")
         val commitCommand = RaftTransactionCommitLog.Commands.CommitTransaction(
                 states,

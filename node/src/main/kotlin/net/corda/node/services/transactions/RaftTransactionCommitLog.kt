@@ -13,6 +13,9 @@ import io.atomix.copycat.server.storage.snapshot.SnapshotReader
 import io.atomix.copycat.server.storage.snapshot.SnapshotWriter
 import net.corda.core.contracts.StateRef
 import net.corda.core.crypto.SecureHash
+import net.corda.core.crypto.sha256
+import net.corda.core.flows.StateConsumptionDetails
+import net.corda.core.internal.isConsumedByTheSameTx
 import net.corda.core.serialization.SerializationDefaults
 import net.corda.core.serialization.deserialize
 import net.corda.core.serialization.serialize
@@ -40,7 +43,8 @@ class RaftTransactionCommitLog<E, EK>(
                 val states: List<StateRef>,
                 val txId: SecureHash,
                 val requestingParty: String,
-                val requestSignature: ByteArray
+                val requestSignature: ByteArray,
+                val timeWindowValid: Boolean
         ) : Command<Map<StateRef, SecureHash>> {
             override fun compaction(): Command.CompactionMode {
                 // The FULL compaction mode retains the command in the log until it has been stored and applied on all
@@ -65,7 +69,7 @@ class RaftTransactionCommitLog<E, EK>(
     fun commitTransaction(raftCommit: Commit<Commands.CommitTransaction>): Map<StateRef, SecureHash> {
         raftCommit.use {
             val index = it.index()
-            val conflicts = LinkedHashMap<StateRef, SecureHash>()
+            val conflicts = LinkedHashMap<StateRef, StateConsumptionDetails>()
             db.transaction {
                 val commitCommand = raftCommit.command()
                 logRequest(commitCommand)
@@ -73,11 +77,25 @@ class RaftTransactionCommitLog<E, EK>(
                 val txId = commitCommand.txId
                 log.debug("State machine commit: storing entries with keys (${states.joinToString()})")
                 for (state in states) {
-                    map[state]?.let { conflicts[state] = it.second }
+                    map[state]?.let { conflicts[state] = StateConsumptionDetails(it.second.sha256()) }
                 }
-                if (conflicts.isEmpty()) {
-                    val entries = states.map { it to Pair(index, txId) }.toMap()
-                    map.putAll(entries)
+
+                if (conflicts.isNotEmpty()) {
+                    if (isConsumedByTheSameTx(commitCommand.txId.sha256(), conflicts)) {
+                        // Re-notarisation, return empty outcome
+                    } else {
+                        // Return conflicts
+                    }
+                }
+                else {
+                    // No conflicts, try to commit
+                    if (commitCommand.timeWindowValid) {
+                        // Commit inputs, return success
+                        val entries = states.map { it to Pair(index, txId) }.toMap()
+                        map.putAll(entries)
+                    } else {
+                        // Don't commit, return timestamp invalid
+                    }
                 }
             }
             return conflicts
@@ -177,6 +195,7 @@ class RaftTransactionCommitLog<E, EK>(
                             buffer.writeString(obj.requestingParty)
                             buffer.writeInt(obj.requestSignature.size)
                             buffer.write(obj.requestSignature)
+                            buffer.writeBoolean(obj.timeWindowValid)
                         }
 
                         override fun read(type: Class<RaftTransactionCommitLog.Commands.CommitTransaction>,
@@ -191,7 +210,8 @@ class RaftTransactionCommitLog<E, EK>(
                             val signatureSize = buffer.readInt()
                             val signature = ByteArray(signatureSize)
                             buffer.read(signature)
-                            return RaftTransactionCommitLog.Commands.CommitTransaction(states, txId, name, signature)
+                            val timeWindowValid = buffer.readBoolean()
+                            return RaftTransactionCommitLog.Commands.CommitTransaction(states, txId, name, signature, timeWindowValid)
                         }
                     }
                 }
