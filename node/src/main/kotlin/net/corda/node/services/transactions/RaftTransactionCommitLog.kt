@@ -12,9 +12,11 @@ import io.atomix.copycat.server.StateMachine
 import io.atomix.copycat.server.storage.snapshot.SnapshotReader
 import io.atomix.copycat.server.storage.snapshot.SnapshotWriter
 import net.corda.core.contracts.StateRef
+import net.corda.core.contracts.TimeWindow
 import net.corda.core.crypto.SecureHash
 import net.corda.core.crypto.sha256
 import net.corda.core.flows.StateConsumptionDetails
+import net.corda.core.internal.VisibleForTesting
 import net.corda.core.internal.isConsumedByTheSameTx
 import net.corda.core.serialization.SerializationDefaults
 import net.corda.core.serialization.deserialize
@@ -26,6 +28,7 @@ import net.corda.node.utilities.AppendOnlyPersistentMap
 import net.corda.nodeapi.internal.persistence.CordaPersistence
 import net.corda.nodeapi.internal.persistence.currentDBSession
 import java.time.Clock
+import java.time.Instant
 
 /**
  * Notarised contract state commit log, replicated across a Copycat Raft cluster.
@@ -34,8 +37,8 @@ import java.time.Clock
  * State re-synchronisation is achieved by replaying the command log to the new (or re-joining) cluster member.
  */
 class RaftTransactionCommitLog<E, EK>(
-        val db: CordaPersistence,
-        val nodeClock: Clock,
+        private val db: CordaPersistence,
+        private val nodeClock: Clock,
         createMap: () -> AppendOnlyPersistentMap<StateRef, Pair<Long, SecureHash>, E, EK>
 ) : StateMachine(), Snapshottable {
     object Commands {
@@ -44,7 +47,7 @@ class RaftTransactionCommitLog<E, EK>(
                 val txId: SecureHash,
                 val requestingParty: String,
                 val requestSignature: ByteArray,
-                val timeWindowValid: Boolean
+                val timeWindow: TimeWindow? = null
         ) : Command<Map<StateRef, SecureHash>> {
             override fun compaction(): Command.CompactionMode {
                 // The FULL compaction mode retains the command in the log until it has been stored and applied on all
@@ -89,7 +92,7 @@ class RaftTransactionCommitLog<E, EK>(
                 }
                 else {
                     // No conflicts, try to commit
-                    if (commitCommand.timeWindowValid) {
+                    if (commitCommand.timeWindow != null) {
                         // Commit inputs, return success
                         val entries = states.map { it to Pair(index, txId) }.toMap()
                         map.putAll(entries)
@@ -98,7 +101,7 @@ class RaftTransactionCommitLog<E, EK>(
                     }
                 }
             }
-            return conflicts
+            TODO()
         }
     }
 
@@ -178,6 +181,7 @@ class RaftTransactionCommitLog<E, EK>(
         private val log = contextLogger()
 
         // Add custom serializers so Catalyst doesn't attempt to fall back on Java serialization for these types, which is disabled process-wide:
+        @VisibleForTesting
         val serializer: Serializer by lazy {
             Serializer().apply {
                 register(RaftTransactionCommitLog.Commands.CommitTransaction::class.java) {
@@ -195,7 +199,8 @@ class RaftTransactionCommitLog<E, EK>(
                             buffer.writeString(obj.requestingParty)
                             buffer.writeInt(obj.requestSignature.size)
                             buffer.write(obj.requestSignature)
-                            buffer.writeBoolean(obj.timeWindowValid)
+                            buffer.writeLong(obj.timeWindow?.fromTime?.toEpochMilli() ?: -1)
+                            buffer.writeLong(obj.timeWindow?.untilTime?.toEpochMilli() ?: -1)
                         }
 
                         override fun read(type: Class<RaftTransactionCommitLog.Commands.CommitTransaction>,
@@ -210,8 +215,19 @@ class RaftTransactionCommitLog<E, EK>(
                             val signatureSize = buffer.readInt()
                             val signature = ByteArray(signatureSize)
                             buffer.read(signature)
-                            val timeWindowValid = buffer.readBoolean()
-                            return RaftTransactionCommitLog.Commands.CommitTransaction(states, txId, name, signature, timeWindowValid)
+                            val timeWindowFrom = buffer.readLong()
+                            val timeWindowUntil = buffer.readLong()
+                            val timeWindow = if (timeWindowFrom != -1L) {
+                                if (timeWindowUntil != -1L) {
+                                    TimeWindow.between(Instant.ofEpochMilli(timeWindowFrom), Instant.ofEpochMilli(timeWindowUntil))
+                                } else {
+                                    TimeWindow.fromOnly(Instant.ofEpochMilli(timeWindowFrom))
+                                }
+                            }
+                            else {
+                                TimeWindow.untilOnly(Instant.ofEpochMilli(timeWindowUntil))
+                            }
+                            return RaftTransactionCommitLog.Commands.CommitTransaction(states, txId, name, signature, timeWindow)
                         }
                     }
                 }

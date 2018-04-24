@@ -1,6 +1,7 @@
 package net.corda.node.services.transactions
 
 import net.corda.core.contracts.StateRef
+import net.corda.core.contracts.TimeWindow
 import net.corda.core.crypto.SecureHash
 import net.corda.core.crypto.sha256
 import net.corda.core.flows.NotarisationRequestSignature
@@ -9,6 +10,8 @@ import net.corda.core.flows.NotaryInternalException
 import net.corda.core.flows.StateConsumptionDetails
 import net.corda.core.identity.Party
 import net.corda.core.internal.ThreadBox
+import net.corda.core.internal.isConsumedByTheSameTx
+import net.corda.core.internal.validateTimeWindow
 import net.corda.core.node.services.UniquenessProvider
 import net.corda.core.schemas.PersistentStateRef
 import net.corda.core.serialization.CordaSerializable
@@ -65,6 +68,21 @@ class PersistentUniquenessProvider(val clock: Clock) : UniquenessProvider, Singl
 
     private class InnerState {
         val committedStates = createMap()
+
+        fun findAlreadyCommitted(states: List<StateRef>): LinkedHashMap<StateRef, StateConsumptionDetails> {
+            val conflictingStates = LinkedHashMap<StateRef, StateConsumptionDetails>()
+            for (inputState in states) {
+                val consumingTx = committedStates[inputState]
+                if (consumingTx != null) conflictingStates[inputState] = StateConsumptionDetails(consumingTx.sha256())
+            }
+            return conflictingStates
+        }
+        fun commitStates(states: List<StateRef>, txId: SecureHash) {
+            states.forEach { stateRef ->
+                committedStates[stateRef] = txId
+            }
+            log.debug("Successfully committed all input states: $states")
+        }
     }
 
     private val mutex = ThreadBox(InnerState())
@@ -95,10 +113,42 @@ class PersistentUniquenessProvider(val clock: Clock) : UniquenessProvider, Singl
                 )
     }
 
-    override fun commit(states: List<StateRef>, txId: SecureHash, callerIdentity: Party, requestSignature: NotarisationRequestSignature) {
-        logRequest(txId, callerIdentity, requestSignature)
-        val conflict = commitStates(states, txId)
-        if (conflict != null) throw NotaryInternalException(NotaryError.Conflict(txId, conflict))
+    override fun commit(
+            states: List<StateRef>,
+            txId: SecureHash,
+            callerIdentity: Party,
+            requestSignature: NotarisationRequestSignature,
+            timeWindow: TimeWindow?) {
+        mutex.locked {
+            logRequest(txId, callerIdentity, requestSignature)
+            val conflictingStates = findAlreadyCommitted(states)
+            if (conflictingStates.isNotEmpty()) {
+                handleConflicts(txId, conflictingStates)
+            }
+            else {
+                handleNoConflicts(timeWindow, states, txId)
+            }
+        }
+    }
+
+    private fun InnerState.handleNoConflicts(timeWindow: TimeWindow?, states: List<StateRef>, txId: SecureHash) {
+        val outsideTimeWindowError = validateTimeWindow(clock.instant(), timeWindow)
+        if (outsideTimeWindowError == null) {
+            commitStates(states, txId)
+        } else {
+            throw NotaryInternalException(outsideTimeWindowError)
+        }
+    }
+
+    private fun handleConflicts(txId: SecureHash, conflictingStates: LinkedHashMap<StateRef, StateConsumptionDetails>) {
+        if (isConsumedByTheSameTx(txId.sha256(), conflictingStates)) {
+            log.debug("Transaction $txId already notarised")
+            return
+        } else {
+            log.debug("Failure, input states already committed: ${conflictingStates.keys}")
+            val conflictError = NotaryError.Conflict(txId, conflictingStates)
+            throw NotaryInternalException(conflictError)
+        }
     }
 
     private fun logRequest(txId: SecureHash, callerIdentity: Party, requestSignature: NotarisationRequestSignature) {
@@ -110,27 +160,5 @@ class PersistentUniquenessProvider(val clock: Clock) : UniquenessProvider, Singl
         )
         val session = currentDBSession()
         session.persist(request)
-    }
-
-    private fun commitStates(states: List<StateRef>, txId: SecureHash): Map<StateRef, StateConsumptionDetails>? {
-        val conflict = mutex.locked {
-            val conflictingStates = LinkedHashMap<StateRef, SecureHash>()
-            for (inputState in states) {
-                val consumingTx = committedStates[inputState]
-                if (consumingTx != null) conflictingStates[inputState] = consumingTx
-            }
-            if (conflictingStates.isNotEmpty()) {
-                log.debug("Failure, input states already committed: ${conflictingStates.keys}")
-                val conflict = conflictingStates.mapValues { (_, txId) -> StateConsumptionDetails(txId.sha256()) }
-                conflict
-            } else {
-                states.forEach { stateRef ->
-                    committedStates[stateRef] = txId
-                }
-                log.debug("Successfully committed all input states: $states")
-                null
-            }
-        }
-        return conflict
     }
 }

@@ -14,6 +14,7 @@ import io.atomix.copycat.server.cluster.Member
 import io.atomix.copycat.server.storage.Storage
 import io.atomix.copycat.server.storage.StorageLevel
 import net.corda.core.contracts.StateRef
+import net.corda.core.contracts.TimeWindow
 import net.corda.core.crypto.SecureHash
 import net.corda.core.crypto.sha256
 import net.corda.core.flows.NotarisationRequestSignature
@@ -193,13 +194,14 @@ class RaftUniquenessProvider(
             txId: SecureHash,
             callerIdentity: Party,
             requestSignature: NotarisationRequestSignature,
-            timeWindowValid: Boolean) {
+            timeWindow: TimeWindow?) {
         log.debug("Attempting to commit input states: ${states.joinToString()}")
         val commitCommand = RaftTransactionCommitLog.Commands.CommitTransaction(
                 states,
                 txId,
                 callerIdentity.name.toString(),
-                requestSignature.serialize().bytes
+                requestSignature.serialize().bytes,
+                timeWindow
         )
         val conflicts = client.submit(commitCommand).get()
         if (conflicts.isNotEmpty()) {

@@ -2,6 +2,7 @@ package net.corda.core.node.services
 
 import net.corda.core.CordaException
 import net.corda.core.contracts.StateRef
+import net.corda.core.contracts.TimeWindow
 import net.corda.core.crypto.SecureHash
 import net.corda.core.flows.NotarisationRequestSignature
 import net.corda.core.identity.Party
@@ -20,7 +21,7 @@ interface UniquenessProvider {
             txId: SecureHash,
             callerIdentity: Party,
             requestSignature: NotarisationRequestSignature,
-            timeWindowValid: Boolean = true
+            timeWindow: TimeWindow? = null
     )
 
     /** Specifies the consuming transaction for every conflicting state. */
